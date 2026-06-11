@@ -1,11 +1,8 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
-
-# Import the custom classes we created
 from TaxonomyMerger import TaxonomyMerger
 from Normalize import Normalizer
 
-# 1. Load the data (Abundances + Metadata)
 print("Loading data...")
 df_abundances = pd.read_csv(r"C:\Users\batst\OneDrive\المستندات\CRC_Healthy_Merged\GuptaA_2019_abundances.csv")
 df_metadata = pd.read_csv(r"C:\Users\batst\OneDrive\المستندات\CRC_Healthy_Merged\GuptaA_2019_metadata.csv")
@@ -17,7 +14,7 @@ df_full = pd.merge(df_abundances, labels, on='sample_id')
 # Define the target column for stratification
 y = df_full['study_condition']
 
-# 2. Split into Train, Validation, Test with Stratify
+# Split into Train, Validation, Test with Stratify
 print("Splitting data...")
 df_train, df_test = train_test_split(df_full, test_size=0.2, random_state=42, stratify=y)
 
@@ -55,4 +52,4 @@ final_train.to_csv("Processed_Train_Data.csv", index=False)
 final_val.to_csv("Processed_Validation_Data.csv", index=False)
 final_test.to_csv("Processed_Test_Data.csv", index=False)
 
-print("✅ Preprocessing completed successfully! Files saved to the directory.")
+print("Preprocessing completed successfully")
