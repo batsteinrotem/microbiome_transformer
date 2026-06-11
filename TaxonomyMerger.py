@@ -62,6 +62,8 @@ class TaxonomyMerger:
         """
         transform the data (test, validation) without PCA fit
         """
+        if self.unique_cols_mask is None:
+            return df_new
         sample_ids = df_new['sample_id']
         features_df = df_new.drop(columns=['sample_id'])
 
