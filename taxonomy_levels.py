@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 
-PATH = r"path to directory"
+PATH = r"C:\Users\batst\OneDrive\المستندات\CRC_Healthy+_Merged"
 
 # Check the bacterias taxonomy level
 def get_tax_level(tax_string):
