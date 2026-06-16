@@ -69,14 +69,14 @@ def export_data_csv(X_train_processed, X_val_processed, X_test_processed, y_trai
 
 
 def main():
-    base_dir = r"c:\Users\batst\OneDrive\Desktop\Microbiome Data\CRC_Healthy+_Merged"
-    study_name = "YachidaS_2019"
+    base_dir = r"c:\Users\batst\OneDrive\Desktop\Microbiome Data\CRC_Healthy_Merged"
+    study_name = "VogtmannE_2016"
     df_full = load_data(base_dir, study_name)
 
     X_train, X_val, X_test, y_train, y_val, y_test = split_data(df_full)
 
     merger_method = "sum"
-    normalizer_method = "clr"
+    normalizer_method = "relative_abundance"
     pipeline = build_pipeline(merger_method, normalizer_method)
 
     # Fit ONLY on training data, then transform each split

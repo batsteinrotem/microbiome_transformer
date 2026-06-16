@@ -9,6 +9,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     roc_auc_score, f1_score, accuracy_score, confusion_matrix, ConfusionMatrixDisplay,
+    roc_curve,
 )
 import xgboost as xgb
 import lightgbm as lgb
@@ -57,20 +58,19 @@ def get_model(trial, model_name):
             max_depth=trial.suggest_int("max_depth", 2, 6),
             min_samples_split=trial.suggest_int("min_samples_split", 2, 10),
             min_samples_leaf=trial.suggest_int("min_samples_leaf", 1, 8),
-            max_features=trial.suggest_categorical("max_features", ["sqrt", "log2"]),
             random_state=RANDOM_STATE
         )
 
     elif model_name == "xgboost":
         return xgb.XGBClassifier(
-            n_estimators=1000,
+            n_estimators=trial.suggest_int("n_estimators", 50, 300),
             max_depth=trial.suggest_int("max_depth", 2, 4),
             learning_rate=trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
             subsample=trial.suggest_float("subsample", 0.6, 1.0),
-            colsample_bytree=trial.suggest_float("colsample_bytree", 0.3, 0.8),
-            min_child_weight=trial.suggest_int("min_child_weight", 5, 10),
-            reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 10.0, log=True),
-            reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 10.0, log=True),
+            colsample_bytree=trial.suggest_float("colsample_bytree", 0.1, 1.0),
+            min_child_weight=trial.suggest_int("min_child_weight", 1, 8),
+            reg_lambda=trial.suggest_float("reg_lambda", 1e-2, 10.0, log=True), 
+            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 10.0, log=True),
             scale_pos_weight=1.0,
             use_label_encoder=False,
             eval_metric="logloss",
@@ -79,21 +79,19 @@ def get_model(trial, model_name):
 
     elif model_name == "lightgbm":
         return lgb.LGBMClassifier(
-            n_estimators=1000,
-            max_depth=trial.suggest_int("max_depth", 2, 5),
-            num_leaves=trial.suggest_int("num_leaves", 7, 31),
-            learning_rate=trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
-            min_child_samples=trial.suggest_int("min_child_samples", 10, 50), # critical on small data
-            feature_fraction=trial.suggest_float("feature_fraction", 0.3, 0.8),
+            n_estimators=trial.suggest_int("n_estimators", 50, 300),
+            num_leaves=trial.suggest_int("num_leaves", 7, 20), # Removed max_depth conflict
+            learning_rate=trial.suggest_float("learning_rate", 0.01, 0.08, log=True),
+            min_child_samples=trial.suggest_int("min_child_samples", 2, 20), 
+            feature_fraction=trial.suggest_float("feature_fraction", 0.1, 1.0),
             subsample=trial.suggest_float("subsample", 0.6, 1.0),
-            subsample_freq=1,
-            reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 10.0, log=True),
-            reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 10.0, log=True),
+            reg_lambda=trial.suggest_float("reg_lambda", 1e-2, 10.0, log=True),
+            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 10.0, log=True),
             random_state=RANDOM_STATE,
             verbose=-1
         )
     
-# Helper for Evaluation 
+# ── 3. Helper for Evaluation ───────────────────────────────────────────────
 def evaluate_split(model, X, y):
     preds_proba = model.predict_proba(X)[:, 1]
     preds_bin = model.predict(X)
@@ -101,10 +99,13 @@ def evaluate_split(model, X, y):
         "auc": roc_auc_score(y, preds_proba),
         "f1": f1_score(y, preds_bin),
         "acc": accuracy_score(y, preds_bin),
-        "cm": confusion_matrix(y, preds_bin)
+        "cm": confusion_matrix(y, preds_bin),
+        # Retained for the ROC curve export.
+        "proba": preds_proba,
+        "y_true": np.asarray(y),
     }
 
-# ── 4. Training & Evaluation Pipeline ────────────────────────────────────────
+# ── 4. Training & Evaluation Pipeline ──────────────────────────────────────
 def train_and_evaluate(X_train, y_train, X_val, y_val, X_test, y_test):
     models_to_test = ["logistic_regression", "random_forest", "xgboost", "lightgbm"]
     results = {}
@@ -115,61 +116,29 @@ def train_and_evaluate(X_train, y_train, X_val, y_val, X_test, y_test):
     for model_name in models_to_test:
         print(f"Training: {model_name.upper()}")
 
-        # Hyperparameter Tuning using Optuna
+        # Clean Optuna Trial (No internal early stopping leak)
         def objective(trial):
             model = get_model(trial, model_name)
-            
-            # Apply Early Stopping based on the model type
-            if model_name == "xgboost":
-                # For modern XGBoost, set it via params and pass eval_set to fit
-                model.set_params(early_stopping_rounds=50)
-                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
-                # Save the exact number of trees it took to reach the best score
-                trial.set_user_attr("best_iteration", model.best_iteration)
-                
-            elif model_name == "lightgbm":
-                # LightGBM uses callbacks for early stopping
-                model.fit(X_train, y_train, eval_set=[(X_val, y_val)], 
-                          callbacks=[lgb.early_stopping(stopping_rounds=50, verbose=False)])
-                trial.set_user_attr("best_iteration", model.best_iteration_)
-                
-            else:
-                # Logistic Regression and Random Forest train normally
-                model.fit(X_train, y_train)
-
+            model.fit(X_train, y_train)
             preds = model.predict_proba(X_val)[:, 1]
             return roc_auc_score(y_val, preds)
-
 
         study = optuna.create_study(direction="maximize")
         study.optimize(objective, n_trials=N_TRIALS)
 
-        # Evaluate Train and Val cleanly (without Train+Val leakage)
         best_params = study.best_params
+        
         # --- Evaluate Train and Val ---
         eval_model = get_model(optuna.trial.FixedTrial(best_params), model_name)
-        
-        # Override the 1000 n_estimators with the optimal amount found
-        if model_name in ["xgboost", "lightgbm"]:
-            optimal_trees = study.best_trial.user_attrs["best_iteration"]
-            eval_model.set_params(n_estimators=optimal_trees)
-            # Remove early stopping rounds since we are forcing the exact tree count
-            if model_name == "xgboost":
-                eval_model.set_params(early_stopping_rounds=None)
-
         eval_model.fit(X_train, y_train)
+        
         train_metrics = evaluate_split(eval_model, X_train, y_train)
         val_metrics = evaluate_split(eval_model, X_val, y_val)
 
         # --- Train FINAL model on Train + Validation combined ---
         final_model = get_model(optuna.trial.FixedTrial(best_params), model_name)
-        
-        if model_name in ["xgboost", "lightgbm"]:
-            final_model.set_params(n_estimators=optimal_trees)
-            if model_name == "xgboost":
-                final_model.set_params(early_stopping_rounds=None)
-
         final_model.fit(X_train_full, y_train_full)
+        
         test_metrics = evaluate_split(final_model, X_test, y_test)
 
         results[model_name] = {
@@ -221,6 +190,22 @@ def main():
         fig.savefig(os.path.join(out_dir, f"confusion_matrix_{split}.png"), dpi=150)
         plt.close(fig)
     print(f"Saved confusion-matrix plots to {out_dir}/")
+
+    # Combined ROC curve (test set, all models on one graph).
+    plt.figure(figsize=(7, 6))
+    for m, vals in results.items():
+        t = vals["test"]
+        fpr, tpr, _ = roc_curve(t["y_true"], t["proba"])
+        plt.plot(fpr, tpr, label=f"{m.replace('_', ' ').title()} (AUC={t['auc']:.3f})")
+    plt.plot([0, 1], [0, 1], "k--", alpha=0.5, label="Chance")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("ROC Curves - test set")
+    plt.legend(loc="lower right")
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "roc_test.png"), dpi=150)
+    plt.close()
+    print(f"Saved ROC curve to {os.path.join(out_dir, 'roc_test.png')}")
 
     print("\nFinal Extended Leaderboard (Sorted by Test AUC):")
     print(df_results.to_markdown(index=False))
