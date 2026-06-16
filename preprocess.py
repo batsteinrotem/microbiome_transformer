@@ -1,55 +1,91 @@
 import pandas as pd
+import os
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
 from TaxonomyMerger import TaxonomyMerger
 from Normalize import Normalizer
 
-print("Loading data...")
-df_abundances = pd.read_csv(r"C:\Users\batst\OneDrive\المستندات\CRC_Healthy_Merged\GuptaA_2019_abundances.csv")
-df_metadata = pd.read_csv(r"C:\Users\batst\OneDrive\المستندات\CRC_Healthy_Merged\GuptaA_2019_metadata.csv")
 
-# Extract the medical label and merge it into the full dataframe
-labels = df_metadata[['sample_id', 'study_condition']]
-df_full = pd.merge(df_abundances, labels, on='sample_id')
+def load_data(base_dir, study_name):
+    print("Loading data...")
+    df_abundances = pd.read_csv(os.path.join(base_dir, f"{study_name}_abundances.csv"))
+    df_metadata = pd.read_csv(os.path.join(base_dir, f"{study_name}_metadata.csv"))
 
-# Define the target column for stratification
-y = df_full['study_condition']
+    # Extract labels and merge
+    labels = df_metadata[['sample_id', 'study_condition']]
+    df_full = pd.merge(df_abundances, labels, on='sample_id')
 
-# Split into Train, Validation, Test with Stratify
-print("Splitting data...")
-df_train, df_test = train_test_split(df_full, test_size=0.2, random_state=42, stratify=y)
+    # Drop samples with no label before any further processing
+    before = len(df_full)
+    df_full = df_full.dropna(subset=['study_condition'])
+    dropped = before - len(df_full)
+    if dropped:
+        print(f"Dropped {dropped} sample(s) with missing study_condition.")
 
-y_train = df_train['study_condition']
-df_train, df_val = train_test_split(df_train, test_size=0.2, random_state=42, stratify=y_train)
+    return df_full
 
-# Separate labels (y) from features (X) prior to processing
-y_train = df_train.pop('study_condition')
-y_val = df_val.pop('study_condition')
-y_test = df_test.pop('study_condition')
 
-# 3. Phase A: Taxonomy Merge (Sub-PCA)
-print("Performing taxonomy merge...")
-merger = TaxonomyMerger(method='pca')
-merged_train = merger.fit_transform(df_train)
-merged_val = merger.transform(df_val)
-merged_test = merger.transform(df_test)
+def split_data(df_full):
+    # Separate Features (X) and Target (y) BEFORE splitting
+    X = df_full.drop(columns=['study_condition'])
+    y = df_full['study_condition']
 
-# 4. Phase B: Normalization (CLR)
-print("Performing CLR normalization...")
-normalizer = Normalizer(method='clr')
-final_train = normalizer.fit_transform(merged_train)
-final_val = normalizer.transform(merged_val)
-final_test = normalizer.transform(merged_test)
+    print("Splitting data into Train, Val, Test")
+    # First split: Train+Val vs Test using stratify to balance CRC & Healthy
+    X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-# 5. Export to CSV
-print("Exporting files...")
-# Reinsert the label (Healthy/CRC) as the second column for easier reading in Excel
-final_train.insert(1, 'study_condition', y_train.values)
-final_val.insert(1, 'study_condition', y_val.values)
-final_test.insert(1, 'study_condition', y_test.values)
+    # Second split: Train vs Val using stratify
+    X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=0.1, random_state=42, stratify=y_temp)
 
-# Save the files
-final_train.to_csv("Processed_Train_Data.csv", index=False)
-final_val.to_csv("Processed_Validation_Data.csv", index=False)
-final_test.to_csv("Processed_Test_Data.csv", index=False)
+    return X_train, X_val, X_test, y_train, y_val, y_test
 
-print("Preprocessing completed successfully")
+
+def build_pipeline(merger_method="sum", normalizer_method="clr"):
+    # Pre-process using scikit pipeline
+    pipeline = Pipeline([
+        ('merger', TaxonomyMerger(method=merger_method)),
+        ('normalizer', Normalizer(method=normalizer_method))
+    ])
+    return pipeline
+
+
+def export_data_csv(X_train_processed, X_val_processed, X_test_processed, y_train, y_val, y_test):
+    print("Exporting files")
+    # Safely reattach labels using DataFrame indices to ensure alignment
+    train_export = X_train_processed.copy()
+    train_export.insert(1, 'study_condition', y_train)
+
+    val_export = X_val_processed.copy()
+    val_export.insert(1, 'study_condition', y_val)
+
+    test_export = X_test_processed.copy()
+    test_export.insert(1, 'study_condition', y_test)
+
+    train_export.to_csv("train_processed.csv", index=False)
+    val_export.to_csv("val_processed.csv", index=False)
+    test_export.to_csv("test_processed.csv", index=False)
+
+    print("Preprocessing complete")
+
+
+def main():
+    base_dir = r"c:\Users\batst\OneDrive\Desktop\Microbiome Data\CRC_Healthy+_Merged"
+    study_name = "YachidaS_2019"
+    df_full = load_data(base_dir, study_name)
+
+    X_train, X_val, X_test, y_train, y_val, y_test = split_data(df_full)
+
+    merger_method = "sum"
+    normalizer_method = "clr"
+    pipeline = build_pipeline(merger_method, normalizer_method)
+
+    # Fit ONLY on training data, then transform each split
+    X_train_processed = pipeline.fit_transform(X_train)
+    X_val_processed   = pipeline.transform(X_val)
+    X_test_processed  = pipeline.transform(X_test)
+
+    export_data_csv(X_train_processed, X_val_processed, X_test_processed, y_train, y_val, y_test)
+
+
+if __name__ == "__main__":
+    main()

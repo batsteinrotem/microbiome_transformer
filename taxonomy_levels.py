@@ -51,7 +51,8 @@ def main():
     for file in file_paths:
         print(f"Loading data...")
         df_abundances = pd.read_csv(file)
-        taxonomy_analysis(df_abundances)
+        print(f"{file} ")
+        #taxonomy_analysis(df_abundances)
 
 # Get abundances count files for each study
 def get_paths(dirpath):
