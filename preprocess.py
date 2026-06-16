@@ -68,15 +68,12 @@ def export_data_csv(X_train_processed, X_val_processed, X_test_processed, y_trai
     print("Preprocessing complete")
 
 
-def main():
-    base_dir = r"c:\Users\batst\OneDrive\Desktop\Microbiome Data\CRC_Healthy_Merged"
-    study_name = "VogtmannE_2016"
+def preprocess(base_dir, study_name, merger_method="sum", normalizer_method="clr", export=False):
+
     df_full = load_data(base_dir, study_name)
 
     X_train, X_val, X_test, y_train, y_val, y_test = split_data(df_full)
 
-    merger_method = "sum"
-    normalizer_method = "relative_abundance"
     pipeline = build_pipeline(merger_method, normalizer_method)
 
     # Fit ONLY on training data, then transform each split
@@ -84,8 +81,13 @@ def main():
     X_val_processed   = pipeline.transform(X_val)
     X_test_processed  = pipeline.transform(X_test)
 
-    export_data_csv(X_train_processed, X_val_processed, X_test_processed, y_train, y_val, y_test)
+    if export:
+        export_data_csv(X_train_processed, X_val_processed, X_test_processed, y_train, y_val, y_test)
+
+    return X_train_processed, X_val_processed, X_test_processed, y_train, y_val, y_test
 
 
 if __name__ == "__main__":
-    main()
+    BASE_DIR = r"c:\Users\batst\OneDrive\Desktop\Microbiome Data\CRC_Healthy_Merged"
+    STUDY_NAME = "VogtmannE_2016"
+    preprocess(BASE_DIR, STUDY_NAME, export=True)

@@ -1,0 +1,32 @@
+{
+  "logistic_regression": {
+    "C": 0.3470266988650412,
+    "penalty": "l2"
+  },
+  "random_forest": {
+    "n_estimators": 114,
+    "max_depth": 3,
+    "min_samples_split": 7,
+    "min_samples_leaf": 2
+  },
+  "xgboost": {
+    "n_estimators": 73,
+    "max_depth": 2,
+    "learning_rate": 0.07912218405223231,
+    "subsample": 0.8693386818617739,
+    "colsample_bytree": 0.5910158254794908,
+    "min_child_weight": 6,
+    "reg_lambda": 3.468583838244882,
+    "reg_alpha": 0.3859464336397187
+  },
+  "lightgbm": {
+    "n_estimators": 90,
+    "num_leaves": 5,
+    "learning_rate": 0.027470709460463493,
+    "min_child_samples": 13,
+    "feature_fraction": 0.5352273709492621,
+    "subsample": 0.8868421704055203,
+    "reg_lambda": 0.030872201094061257,
+    "reg_alpha": 0.17571607325402455
+  }
+}
