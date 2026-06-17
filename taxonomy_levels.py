@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 
-PATH = r"path to directory"
+PATH = r"C:\Users\batst\OneDrive\المستندات\CRC_Healthy+_Merged"
 
 # Check the bacterias taxonomy level
 def get_tax_level(tax_string):
@@ -51,7 +51,8 @@ def main():
     for file in file_paths:
         print(f"Loading data...")
         df_abundances = pd.read_csv(file)
-        taxonomy_analysis(df_abundances)
+        print(f"{file} ")
+        #taxonomy_analysis(df_abundances)
 
 # Get abundances count files for each study
 def get_paths(dirpath):
