@@ -13,7 +13,7 @@ import train_models as tm
 BASE_DIR = r"c:\Users\batst\OneDrive\Desktop\Microbiome Data\CRC_Healthy_Merged"
 STUDY_NAME = "VogtmannE_2016"
 MERGER_METHOD = "sum"
-NORMALIZER_METHOD = "clr"
+NORMALIZER_METHOD = "relative_abundance"
 
 
 def main():

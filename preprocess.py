@@ -2,8 +2,8 @@ import pandas as pd
 import os
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from TaxonomyMerger import TaxonomyMerger
-from Normalize import Normalizer
+from taxonomy_merger import TaxonomyMerger
+from normalize import Normalizer
 
 
 def load_data(base_dir, study_name):

@@ -9,7 +9,6 @@ matplotlib.use("Agg")  # non-interactive backend: render straight to files
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     roc_auc_score, f1_score, accuracy_score, confusion_matrix, ConfusionMatrixDisplay,
     roc_curve,
@@ -22,12 +21,6 @@ optuna.logging.set_verbosity(optuna.logging.ERROR)
 BASE_DIR = "./"
 N_TRIALS = 50
 RANDOM_STATE = 42
-
-# Early stopping: set a high tree ceiling and let the watch set decide the real count.
-N_ESTIMATORS_CEILING = 500     # cap only; early stopping picks the actual number of rounds
-EARLY_STOPPING_ROUNDS = 20     # stop after this many rounds with no improvement on the watch set
-ES_FRACTION = 0.15             # slice carved out of TRAIN to watch for early stopping
-TREE_MODELS = {"xgboost", "lightgbm"}
 
 LABEL_MAP = {"control": 0, "CRC": 1}                      # encoding (CRC = positive class 1)
 LABEL_NAMES = {v: k for k, v in LABEL_MAP.items()}        # {0: "control", 1: "CRC"}
@@ -67,7 +60,7 @@ def load_splits():
     test  = pd.read_csv(os.path.join(BASE_DIR, "test_processed.csv"))
     return prepare_splits(train, val, test)
 
-# ── 2. Optuna Objective Factory ───────────────────────────────────────────────
+# ── 2. Optuna Objective Factory 
 def get_model(trial, model_name):
     if model_name == "logistic_regression":
         return LogisticRegression(
@@ -75,7 +68,7 @@ def get_model(trial, model_name):
             penalty=trial.suggest_categorical("penalty", ["l1", "l2"]),
             solver="liblinear",
             random_state=RANDOM_STATE,
-            max_iter=1000,
+            max_iter=1000
         )
 
     elif model_name == "random_forest":
@@ -84,70 +77,40 @@ def get_model(trial, model_name):
             max_depth=trial.suggest_int("max_depth", 2, 6),
             min_samples_split=trial.suggest_int("min_samples_split", 2, 10),
             min_samples_leaf=trial.suggest_int("min_samples_leaf", 1, 8),
-            n_jobs=-1,
-            random_state=RANDOM_STATE,
+            random_state=RANDOM_STATE
         )
 
     elif model_name == "xgboost":
-        # n_estimators is NOT tuned: it is a high ceiling and early stopping picks the
-        # real count. scale_pos_weight (no-op at 1.0) and use_label_encoder (removed in
-        # XGBoost 2.x) are gone. gamma replaces leaning solely on min_child_weight, whose
-        # ceiling is pulled down (it is a hessian sum, not a sample count).
         return xgb.XGBClassifier(
-            n_estimators=N_ESTIMATORS_CEILING,
+            n_estimators=trial.suggest_int("n_estimators", 50, 150),
             max_depth=trial.suggest_int("max_depth", 2, 3),
             learning_rate=trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
             subsample=trial.suggest_float("subsample", 0.6, 1.0),
             colsample_bytree=trial.suggest_float("colsample_bytree", 0.5, 1.0),
-            min_child_weight=trial.suggest_int("min_child_weight", 1, 6),
-            gamma=trial.suggest_float("gamma", 1e-3, 5.0, log=True),
-            reg_lambda=trial.suggest_float("reg_lambda", 0.1, 10.0, log=True),
+            min_child_weight=trial.suggest_int("min_child_weight", 5, 15),
+            reg_lambda=trial.suggest_float("reg_lambda", 0.1, 10.0, log=True), 
             reg_alpha=trial.suggest_float("reg_alpha", 0.1, 10.0, log=True),
+            scale_pos_weight=1.0,
+            use_label_encoder=False,
             eval_metric="logloss",
-            early_stopping_rounds=EARLY_STOPPING_ROUNDS,
-            n_jobs=-1,
-            random_state=RANDOM_STATE,
+            random_state=RANDOM_STATE
         )
 
     elif model_name == "lightgbm":
-        # n_estimators is the ceiling (early stopping decides the count). subsample now
-        # actually takes effect because subsample_freq > 0. feature_fraction is expressed
-        # through the sklearn alias colsample_bytree to avoid the alias-collision warning.
-        # min_split_gain added; reg floors raised to 0.1 to match XGBoost.
         return lgb.LGBMClassifier(
-            n_estimators=N_ESTIMATORS_CEILING,
+            n_estimators=trial.suggest_int("n_estimators", 50, 150),
             num_leaves=trial.suggest_int("num_leaves", 4, 8),
             learning_rate=trial.suggest_float("learning_rate", 0.01, 0.08, log=True),
-            min_child_samples=trial.suggest_int("min_child_samples", 10, 25),
-            colsample_bytree=trial.suggest_float("colsample_bytree", 0.5, 1.0),
+            min_child_samples=trial.suggest_int("min_child_samples", 10, 25), 
+            feature_fraction=trial.suggest_float("feature_fraction", 0.3, 0.5),
             subsample=trial.suggest_float("subsample", 0.6, 1.0),
-            subsample_freq=1,   # REQUIRED: with the default 0, subsample is silently ignored
-            min_split_gain=trial.suggest_float("min_split_gain", 1e-3, 1.0, log=True),
-            reg_lambda=trial.suggest_float("reg_lambda", 0.1, 10.0, log=True),
-            reg_alpha=trial.suggest_float("reg_alpha", 0.1, 10.0, log=True),
-            n_jobs=-1,
+            reg_lambda=trial.suggest_float("reg_lambda", 1e-2, 10.0, log=True),
+            reg_alpha=trial.suggest_float("reg_alpha", 1e-4, 10.0, log=True),
             random_state=RANDOM_STATE,
-            verbose=-1,
+            verbose=-1
         )
-
-# ── 3. Fitting helper (handles early stopping for the tree models) ────────────
-def fit_model(model, model_name, X_fit, y_fit, X_es, y_es):
-    """Fit a model. Tree models stop early using the (X_es, y_es) watch set; the
-    linear/forest models ignore it and just fit."""
-    if model_name == "xgboost":
-        model.fit(X_fit, y_fit, eval_set=[(X_es, y_es)], verbose=False)
-    elif model_name == "lightgbm":
-        model.fit(
-            X_fit, y_fit,
-            eval_set=[(X_es, y_es)],
-            eval_metric="binary_logloss",
-            callbacks=[lgb.early_stopping(stopping_rounds=EARLY_STOPPING_ROUNDS, verbose=False)],
-        )
-    else:
-        model.fit(X_fit, y_fit)
-    return model
-
-# ── 4. Helper for Evaluation ───────────────────────────────────────────────
+    
+# ── 3. Helper for Evaluation ───────────────────────────────────────────────
 def evaluate_split(model, X, y):
     preds_proba = model.predict_proba(X)[:, 1]
     preds_bin = model.predict(X)
@@ -162,62 +125,44 @@ def evaluate_split(model, X, y):
         "y_true": np.asarray(y),
     }
 
-# ── 5. Training & Evaluation Pipeline ──────────────────────────────────────
+# ── 4. Training & Evaluation Pipeline ──────────────────────────────────────
 def train_and_evaluate(X_train, y_train, X_val, y_val, X_test, y_test):
     models_to_test = ["logistic_regression", "random_forest", "xgboost", "lightgbm"]
     results = {}
 
-    # Carve the early-stopping watch set out of TRAIN only. X_val stays reserved for the
-    # Optuna objective, so the round-count decision and the tuning score never share rows.
-    # All models train on X_fit so the leaderboard compares them on identical data.
-    X_fit, X_es, y_fit, y_es = train_test_split(
-        X_train, y_train, test_size=ES_FRACTION, random_state=RANDOM_STATE, stratify=y_train
-    )
-
-    # The final models train on train+val combined, so they need their own watch set
-    # drawn from that combined pool (otherwise early stopping has nothing to watch).
     X_train_full = pd.concat([X_train, X_val], ignore_index=True)
     y_train_full = np.concatenate([y_train, y_val])
-    X_fit_full, X_es_full, y_fit_full, y_es_full = train_test_split(
-        X_train_full, y_train_full, test_size=ES_FRACTION,
-        random_state=RANDOM_STATE, stratify=y_train_full
-    )
 
     for model_name in models_to_test:
         print(f"Training: {model_name.upper()}")
 
-        # Objective: fit on X_fit (tree models watch X_es), then score AUC on X_val.
-        def objective(trial, model_name=model_name):
+        # Clean Optuna Trial (No internal early stopping leak)
+        def objective(trial):
             model = get_model(trial, model_name)
-            fit_model(model, model_name, X_fit, y_fit, X_es, y_es)
+            model.fit(X_train, y_train)
             preds = model.predict_proba(X_val)[:, 1]
             return roc_auc_score(y_val, preds)
 
-        # Seeded sampler for reproducible hyperparameter searches.
+        # Create a seeded sampler for Optuna to ensure perfectly reproducible hyperparameter searches
         sampler = optuna.samplers.TPESampler(seed=RANDOM_STATE)
+        
         study = optuna.create_study(direction="maximize", sampler=sampler)
         study.optimize(objective, n_trials=N_TRIALS)
 
         best_params = study.best_params
-
-        # --- Evaluate Train and Val (model fit on the same X_fit/X_es used in search) ---
+        
+        # --- Evaluate Train and Val ---
         eval_model = get_model(optuna.trial.FixedTrial(best_params), model_name)
-        fit_model(eval_model, model_name, X_fit, y_fit, X_es, y_es)
-
+        eval_model.fit(X_train, y_train)
+        
         train_metrics = evaluate_split(eval_model, X_train, y_train)
         val_metrics = evaluate_split(eval_model, X_val, y_val)
 
-        # --- Train FINAL model on Train + Validation, with its own early-stop slice ---
+        # --- Train FINAL model on Train + Validation combined ---
         final_model = get_model(optuna.trial.FixedTrial(best_params), model_name)
-        fit_model(final_model, model_name, X_fit_full, y_fit_full, X_es_full, y_es_full)
-
+        final_model.fit(X_train_full, y_train_full)
+        
         test_metrics = evaluate_split(final_model, X_test, y_test)
-
-        # Record where boosting actually stopped (useful sanity check for the ceiling).
-        if model_name == "xgboost":
-            print(f"  best_iteration (final): {final_model.best_iteration}")
-        elif model_name == "lightgbm":
-            print(f"  best_iteration (final): {final_model.best_iteration_}")
 
         results[model_name] = {
             "train": train_metrics,
@@ -230,7 +175,7 @@ def train_and_evaluate(X_train, y_train, X_val, y_val, X_test, y_test):
 
     return results
 
-# ── 6. Pipeline + entry points ────────────────────────────────────────────────
+# ── 5. Pipeline + entry points ────────────────────────────────────────────────
 def run_pipeline(X_train, y_train, X_val, y_val, X_test, y_test, sample_ids):
     results = train_and_evaluate(X_train, y_train, X_val, y_val, X_test, y_test)
 
@@ -248,13 +193,13 @@ def run_pipeline(X_train, y_train, X_val, y_val, X_test, y_test, sample_ids):
             "Val_Acc": round(vals["val"]["acc"], 3),
             "Test_Acc": round(vals["test"]["acc"], 3)
         })
-
+        
     df_results = pd.DataFrame(records).sort_values(by="Test_AUC", ascending=False)
 
-    # Create the results directory FIRST, then write into it with a portable path
-    # (the old f"{BASE_DIR}\\results" mixed separators and wrote before mkdir).
+    # Create the results directory before writing anything into it.
     out_dir = os.path.join(BASE_DIR, "results")
     os.makedirs(out_dir, exist_ok=True)
+
     out_csv = os.path.join(out_dir, "results_summary_extended.csv")
     df_results.to_csv(out_csv, index=False)
 
